@@ -1,0 +1,10 @@
+streamlit
+python-dotenv
+requests
+pandas
+numpy
+sentence-transformers
+anthropic
+folium
+streamlit-folium
+matplotlib
