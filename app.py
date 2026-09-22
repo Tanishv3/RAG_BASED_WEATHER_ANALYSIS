@@ -2,6 +2,7 @@ import datetime as dt
 import html
 import io
 import os
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import folium
 import matplotlib.pyplot as plt
@@ -14,14 +15,25 @@ import charts as ch
 import theme
 import weather_data as wd
 from cities import INDIA
-from rag import VectorStore, answer
+from rag import VectorStore, answer, get_api_key, NoAPIKey, mask_key
 
-load_dotenv()  # reads ANTHROPIC_API_KEY (and other vars) from a local .env file, if present
+# Load .env from the same folder as this file specifically — NOT via find_dotenv()'s directory-tree
+# search, which can silently pick up an unrelated .env from a parent folder (home dir, another
+# project, etc.) and load the wrong key with no indication anything went wrong.
+# override=True: re-sync os.environ with .env on every rerun. Without this, editing .env after
+# the app has already loaded a (missing/blank/wrong) key has no effect until the process restarts,
+# since python-dotenv otherwise refuses to overwrite an env var that's already set.
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=ENV_PATH, override=True)
 
 st.set_page_config(page_title="India Weather · Satellite + RAG", page_icon="🛰️", layout="wide")
 ALL = "All India (one city per state)"
 HOME, REPORT, BARS, ASK = "🏠 Home", "📝 Weather report", "📊 Bar charts", "💬 Ask AI"
-HAS_KEY = bool(os.getenv("ANTHROPIC_API_KEY"))
+try:
+    get_api_key()
+    HAS_KEY, KEY_PROBLEM = True, None
+except NoAPIKey as e:
+    HAS_KEY, KEY_PROBLEM = False, str(e)
 EX_ONE = ["Will it rain today?", "Best day this week for outdoor plans?", "How hot will it get?"]
 EX_MULTI = ["Which city will get the most rain?", "Which city is hottest today?", "Where is the weather best this weekend?"]
 
@@ -50,13 +62,15 @@ def card(parent, name):
 
 def friendly(e):
     m = str(e).lower()
-    if "credit" in m:
+    if "credit" in m or "billing" in m:
         return "your Anthropic account has no credits"
-    if "api_key" in m or "authentication" in m or "api key" in m:
-        return "the API key is missing or invalid"
-    if "connection" in m or "resolve" in m:
+    if "authentication" in m or "invalid x-api-key" in m or "401" in m:
+        return f"Anthropic rejected the API key — raw error: {e}"
+    if "rate limit" in m or "429" in m:
+        return "the Anthropic account is rate-limited right now"
+    if "connection" in m or "resolve" in m or "timeout" in m:
         return "no internet connection"
-    return type(e).__name__
+    return f"{type(e).__name__}: {e}"
 
 
 def icon(cloud, rain):
@@ -150,7 +164,9 @@ def builtin_answer(prompt, focus):
 def reply(prompt, focus, multi, scope):
     """Returns (text, hits, note, note_ok)."""
     if not HAS_KEY:
-        return builtin_answer(prompt, focus), None, "Automated answer, computed from the live forecast data.", True
+        note = ("Automated answer, computed from the live forecast data." if "not set" in (KEY_PROBLEM or "")
+                else f"Automated answer, computed from the live forecast data ({KEY_PROBLEM}).")
+        return builtin_answer(prompt, focus), None, note, "not set" in (KEY_PROBLEM or "")
     try:
         with st.spinner("Reading the forecast..."):
             text, hits = answer(get_store(), scope, prompt, k=16 if multi else 8)
@@ -249,6 +265,11 @@ with sb.expander("ℹ️ How to use"):
     st.markdown("- Use the menu at the top of the page to switch views, then pick a city, a state, or search a place.\n"
                 "- **Home**: the dashboard. **Report**: the forecast in plain English.\n"
                 "- **Bar charts**: easy-to-read charts. **Ask AI**: chat about the weather.")
+    if HAS_KEY:
+        st.caption(f"✅ Ask AI: using Claude (key `{mask_key(get_api_key())}`).")
+    else:
+        st.caption(f"ℹ️ Ask AI: using the built-in data analysis — {KEY_PROBLEM}")
+    st.caption(f"`.env` path: `{ENV_PATH}` ({'found' if ENV_PATH.exists() else 'not found — create it here'})")
 if refresh:
     st.cache_data.clear()
 locs = tuple(locs)

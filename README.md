@@ -360,3 +360,39 @@ No key is required for weather data itself — Open‑Meteo and NASA GIBS are us
   question may fall back to the general weekly report instead of a targeted answer.
 - Forecast data is Open‑Meteo's numerical model output; accuracy decreases for days 5–7, as noted
   in the generated reports.
+
+---
+
+## Troubleshooting
+
+**"AI answer unavailable: the API key is missing or invalid" — even after adding the key**
+
+This almost always means the key in `.env` isn't actually the one reaching the process. Common
+causes, in order of likelihood:
+
+1. **You edited `.env` without restarting the app.** `python-dotenv` won't overwrite an
+   environment variable that's already set in the process — if the app first ran with a
+   missing/blank key, that value can stick around even after you fix `.env`, because Streamlit's
+   auto-rerun re-executes the *script* but not the *process*. `app.py` calls
+   `load_dotenv(override=True)` specifically to fix this, but if you're still stuck: stop Streamlit
+   fully (`Ctrl+C`) and run `streamlit run app.py` again.
+2. **The wrong `.env` file is being loaded.** `app.py` now loads `.env` from an explicit path —
+   the same folder as `app.py` itself (`Path(__file__).resolve().parent / ".env"`) — rather than
+   letting `python-dotenv` search upward through parent folders, which can otherwise pick up an
+   unrelated `.env` from your home directory or another project with no indication anything went
+   wrong. The sidebar's **ℹ️ How to use** panel shows the exact path being used and whether the
+   file was found there — check that it matches where you actually created `.env`.
+3. **Stray quotes or whitespace in `.env`.** A trailing space or a line break in the middle of the
+   key will produce this error. `rag.get_api_key()` strips surrounding quotes/whitespace
+   automatically and will tell you specifically if whitespace is still embedded in the key.
+4. **Wrong variable name.** It must be exactly `ANTHROPIC_API_KEY`.
+5. **The key itself is invalid, expired, or revoked.** The sidebar shows a masked version of the
+   key actually in use (e.g. `sk-ant-api03...cdef`) — compare it against what you pasted into
+   `.env`. If it matches and the AI call still fails, the chat message itself now includes
+   Anthropic's raw error text (not just a generic guess), which will say e.g.
+   `invalid x-api-key` (the key is wrong/revoked) vs. a credits/billing message vs. a rate-limit
+   message — each needs a different fix (regenerate the key, add credits, or wait, respectively).
+
+If none of that helps, the app still works — the Ask AI tab automatically falls back to the
+built‑in, data‑driven answer engine (see [Ask AI: how a question gets answered](#ask-ai-how-a-question-gets-answered)).
+
